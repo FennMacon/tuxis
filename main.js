@@ -1,12 +1,21 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { setupAudio, createAudioReactiveElements, updateAudioReactiveElements } from './audio.js';
+import { setupAudio, createAudioReactiveElements, updateAudioReactiveElements, audioAnalyser, audioData, isAudioPlaying, audioStartTime } from './audio.js';
 import { createNightSky, updateNightSky } from './nightsky.js';
 import { createSkybox, updateSkybox } from './skybox.js';
 
 // Scene setup
 const scene = new THREE.Scene();
-// No background color here, skybox will handle it
+scene.background = new THREE.Color(0x000011);
+
+// Track the orbiting center point for fairies
+let fairyOrbitCenter = new THREE.Vector3(0, 6, -10); // Default position
+let fairyOrbitTime = 0;
+
+// Share scene reference with audio.js for test buttons
+if (typeof setSceneReference === 'function') {
+    setSceneReference(scene);
+}
 
 // Camera setup
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -1743,32 +1752,141 @@ const createStreetScene = () => {
     const createStreetLamp = (x, z) => {
         const lampGroup = new THREE.Group();
         
-        // Pole
-        const poleGeometry = new THREE.CylinderGeometry(0.1, 0.15, 8, 3, 1);
-        const poleMaterial = createWireframeMaterial(0xaaaaaa);
-        const pole = new THREE.Mesh(poleGeometry, poleMaterial);
+        // Concrete base
+        const baseGeometry = new THREE.CylinderGeometry(0.3, 0.4, 0.8, 6, 1);
+        const concreteMaterial = createWireframeMaterial(0x999999); // Concrete gray
+        const base = new THREE.Mesh(baseGeometry, concreteMaterial);
+        base.position.y = 0.4;
+        lampGroup.add(base);
+        
+        // Main vertical pole
+        const poleGeometry = new THREE.CylinderGeometry(0.15, 0.2, 7, 6, 1);
+        const pole = new THREE.Mesh(poleGeometry, concreteMaterial);
         pole.position.y = 4;
         lampGroup.add(pole);
         
-        // Light
+        // Horizontal arm
+        const armGeometry = new THREE.CylinderGeometry(0.1, 0.1, 2.4, 6, 1);
+        const arm = new THREE.Mesh(armGeometry, concreteMaterial);
+        arm.rotation.z = Math.PI / 2; // Rotate to be horizontal
+        arm.position.set(0.8, 7.5, 0); // Centered on pole
+        lampGroup.add(arm);
+        
+        // Light fixture housing
+        const housingGeometry = new THREE.CylinderGeometry(0.3, 0.4, 0.6, 6, 1);
+        const housingMaterial = createWireframeMaterial(0x777777); // Darker gray for housing
+        const housing = new THREE.Mesh(housingGeometry, housingMaterial);
+        housing.rotation.x = Math.PI / 2; // Rotate to point downward
+        housing.position.set(2.0, 7.5, 0); // Position at the end of the horizontal arm
+        lampGroup.add(housing);
+        
+        // Orange sodium vapor light
         const lightGeometry = new THREE.SphereGeometry(0.25, 8, 4);
-        const lightMaterial = createWireframeMaterial(0xd56f00);
+        const lightMaterial = createWireframeMaterial(0xFF8C00); // Orange sodium vapor color
         const light = new THREE.Mesh(lightGeometry, lightMaterial);
-        light.position.y = 8.2;
+        light.position.set(2.0, 7.3, 0); // Slightly below the housing
         lampGroup.add(light);
+        
+        // Add a point light for actual illumination
+        const pointLight = new THREE.PointLight(0xFF8C00, 0.8, 10);
+        pointLight.position.copy(light.position);
+        lampGroup.add(pointLight);
         
         lampGroup.position.set(x, 0, z);
         sceneGroups.exterior.add(lampGroup);
         return lampGroup;
     };
     
-    // Add street lamps on both sides
+    // Add street lamps on both sides - rotate them to face the street
     streetElements.streetLamps = [
         createStreetLamp(-10, 2),  // Near building, left
         createStreetLamp(10, 2),   // Near building, right
         createStreetLamp(-10, 20), // Far side, left
         createStreetLamp(10, 20)   // Far side, right
     ];
+
+    // Create a bench
+    const createBench = (x, z) => {
+        const benchGroup = new THREE.Group();
+        
+        // Bench seat
+        const seatGeometry = new THREE.BoxGeometry(2, 0.1, 0.6);
+        const benchMaterial = createWireframeMaterial(0x885500); // Wood brown
+        const seat = new THREE.Mesh(seatGeometry, benchMaterial);
+        seat.position.y = 0.5;
+        benchGroup.add(seat);
+        
+        // Bench back
+        const backGeometry = new THREE.BoxGeometry(2, 0.8, 0.1);
+        const back = new THREE.Mesh(backGeometry, benchMaterial);
+        back.position.set(0, 0.9, -0.25);
+        benchGroup.add(back);
+        
+        // Bench legs
+        const createLeg = (x) => {
+            const legGeometry = new THREE.BoxGeometry(0.1, 0.5, 0.1);
+            const leg = new THREE.Mesh(legGeometry, benchMaterial);
+            leg.position.set(x, 0.25, 0);
+            return leg;
+        };
+        
+        // Add four legs
+        benchGroup.add(createLeg(-0.8));
+        benchGroup.add(createLeg(0.8));
+        benchGroup.add(createLeg(-0.8));
+        benchGroup.add(createLeg(0.8));
+        
+        benchGroup.position.set(x, 0, z);
+        sceneGroups.exterior.add(benchGroup);
+        return benchGroup;
+    };
+    
+    // Create a trashcan
+    const createTrashcan = (x, z) => {
+        const trashGroup = new THREE.Group();
+        
+        // Trashcan body
+        const bodyGeometry = new THREE.CylinderGeometry(0.3, 0.25, 0.8, 8);
+        const trashMaterial = createWireframeMaterial(0x444444); // Dark gray
+        const body = new THREE.Mesh(bodyGeometry, trashMaterial);
+        body.position.y = 0.4;
+        trashGroup.add(body);
+        
+        // Trashcan lid
+        const lidGeometry = new THREE.CylinderGeometry(0.32, 0.32, 0.1, 8);
+        const lidMaterial = createWireframeMaterial(0x666666); // Lighter gray
+        const lid = new THREE.Mesh(lidGeometry, lidMaterial);
+        lid.position.y = 0.85;
+        trashGroup.add(lid);
+        
+        trashGroup.position.set(x, 0, z);
+        sceneGroups.exterior.add(trashGroup);
+        return trashGroup;
+    };
+    
+    // Add benches and trashcans to both sidewalks
+    streetElements.benches = [
+        createBench(-8, 2),   // Near sidewalk, left
+        createBench(8, 2),    // Near sidewalk, right
+        createBench(-8, 20),  // Far sidewalk, left
+        createBench(8, 20)    // Far sidewalk, right
+    ];
+    
+    streetElements.trashcans = [
+        createTrashcan(-12, 2),   // Near sidewalk, left
+        createTrashcan(12, 2),    // Near sidewalk, right
+        createTrashcan(-12, 20),  // Far sidewalk, left
+        createTrashcan(12, 20)    // Far sidewalk, right
+    ];
+
+    // Rotate the benches to face the street
+    streetElements.benches[2].rotation.y = -Math.PI; // Left side benches face right
+    streetElements.benches[3].rotation.y = -Math.PI;  // Right side benches face left
+    // Rotate the lamps to face the street
+    streetElements.streetLamps[0].rotation.y = -Math.PI / 2; // Left side lamps face right
+    streetElements.streetLamps[1].rotation.y = -Math.PI / 2;  // Right side lamps face left
+    streetElements.streetLamps[2].rotation.y = Math.PI / 2; // Left side lamps face right
+    streetElements.streetLamps[3].rotation.y = Math.PI / 2;  // Right side lamps face left
     
     // Add cars driving on the street
     streetElements.cars = [
@@ -2354,13 +2472,13 @@ const createInteriorScene = () => {
         
         // Fairy body
         const bodyGeometry = new THREE.SphereGeometry(0.08, 4, 4);
-        const bodyMaterial = createWireframeMaterial(0xFFAAAA); // Light pink
+        const bodyMaterial = createWireframeMaterial(0xFF9999); // Light pink
         const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
         fairyGroup.add(body);
         
         // Fairy wings
         const wingGeometry = new THREE.BoxGeometry(0.2, 0.01, 0.1, 2, 1, 1);
-        const wingMaterial = createWireframeMaterial(0xAAFFFF); // Light cyan
+        const wingMaterial = createWireframeMaterial(0x99FFFF); // Light cyan
         const wings = new THREE.Mesh(wingGeometry, wingMaterial);
         fairyGroup.add(wings);
         
@@ -2374,7 +2492,7 @@ const createInteriorScene = () => {
     
     for (let i = 0; i < fairyCount; i++) {
         const angle = (i / fairyCount) * Math.PI * 2;
-        const radius = 1.2;
+        const radius = 1;
         const x = Math.cos(angle) * radius;
         const z = Math.sin(angle) * radius;
         const fairy = createFairy(x, 0, z);
@@ -2590,76 +2708,93 @@ resetSceneVisibility();
 
 // Animation functions for interior scene elements
 const animateInteriorElements = () => {
-    // Animate spinning fairies (reference to lyrics: "fairies spinning above")
-    if (interiorElements.fairiesGroup) {
-        // Rotate the whole fairy group
-        interiorElements.fairiesGroup.rotation.y += 0.01;
+    // Update orbit time
+    fairyOrbitTime += 0.0015; // Greatly reduced from 0.003
+    
+    // Update orbit center to match mic stand if it exists
+    if (interiorElements.micStand) {
+        fairyOrbitCenter.copy(interiorElements.micStand.position);
+        fairyOrbitCenter.y += 4; // Position above the mic stand
+    }
+    
+    // Get audio levels for reactivity (will return 0 if audio not ready)
+    const bassLevel = getAverageFrequency(1, 4);    // Bass frequencies
+    const midLevel = getAverageFrequency(5, 20);    // Mid frequencies
+    const highLevel = getAverageFrequency(50, 100); // High frequencies
+    
+    // Animate fairies
+    if (interiorElements.fairies) {
+        // Calculate overall group rotation based on audio - MUCH slower
+        const groupRotationSpeed = 0.001 * (1 + bassLevel * 0.3 + midLevel * 0.2); // Slowed down from 0.005
         
-        // Make individual fairies bob up and down slightly
+        // Rotate the fairy group as a whole
+        if (interiorElements.fairiesGroup) {
+            interiorElements.fairiesGroup.rotation.y += groupRotationSpeed;
+        }
+        
+        // Animate individual fairies
         interiorElements.fairies.forEach((fairy, index) => {
-            fairy.position.y = Math.sin(time * 0.5 + index * 0.5) * 0.1;
+            // Each fairy has its own orbit radius and speed
+            const orbitRadius = 1.5 + index * 0.2; // Increase radius for each fairy
+            const orbitSpeed = 0.08 + index * 0.01; // Greatly reduced from 0.2
+            const orbitPhase = index * Math.PI * 0.4; // Different starting positions
+            
+            // Calculate orbit position - gentler movement
+            fairy.position.x = Math.sin(fairyOrbitTime * orbitSpeed + orbitPhase) * orbitRadius;
+            fairy.position.z = Math.cos(fairyOrbitTime * orbitSpeed + orbitPhase) * orbitRadius;
+            
+            // Much gentler bobbing up and down
+            fairy.position.y = Math.sin(fairyOrbitTime * 0.2 + index) * 0.2; // Reduced speed and amplitude
+            
+            // Very slow individual rotation (keeps wireframe appearance)
+            const rotationSpeed = 0.003 * (1 + bassLevel * 0.3 + midLevel * 0.2); // Significantly slowed down from 0.01
+            fairy.rotation.y += rotationSpeed * (0.7 + Math.random() * 0.3); // Less randomization
+            fairy.rotation.x += rotationSpeed * 0.2 * (Math.random() - 0.5); // Reduced impact of randomization
+            fairy.rotation.z += rotationSpeed * 0.2 * (Math.random() - 0.5); // Reduced impact of randomization
         });
     }
     
-    // Animate karaoke TV screen with pulsing color
-    if (interiorElements.tvScreen) {
-        // Reduce the range of brightness to be more subtle (0.4 to 0.7 instead of 0 to 1.0)
-        const brightness = 0.75 + Math.sin(time * 0.3) * 0.15;
-        interiorElements.tvScreen.material.color.setRGB(0, brightness, brightness);
-    }
-    
-    // Add slight animation to microphone (as if being used)
-    if (interiorElements.micStand) {
-        interiorElements.micStand.rotation.y = Math.sin(time * 0.2) * 0.1;
-    }
-    
-    // Make signup sheet pen move slightly (as if being written with)
-    if (interiorElements.signupSheet && interiorElements.signupSheet.children.length > 5) {
-        const pen = interiorElements.signupSheet.children[5]; // Assuming pen is the 6th child
-        pen.position.z = -0.1 + Math.sin(time * 0.5) * 0.05;
-    }
-    
-    // Pulse the glow intensity for furniture items
-    const pulseGlow = (object, baseIntensity = 0.3) => {
-        if (object && object.traverse) {
-            object.traverse(child => {
-                if (child.isMesh && child.material && child.material.uniforms && child.material.uniforms.glowIntensity) {
-                    // Reduced intensity by ~10%
-                    const pulseFactor = baseIntensity + Math.sin(time * 0.3) * 0.12;
-                    child.material.uniforms.glowIntensity.value = pulseFactor;
-                }
-            });
-        }
-    };
-    
-    // Apply pulsing glow to bar stools
-    if (interiorElements.barStools) {
-        interiorElements.barStools.forEach(stool => pulseGlow(stool, 0.27)); // Reduced from 0.3
-    }
-    
-    // Apply pulsing glow to tables
+    // Animate other interior elements based on audio levels
     if (interiorElements.tables) {
-        interiorElements.tables.forEach(table => pulseGlow(table, 0.27)); // Reduced from 0.3
+        interiorElements.tables.forEach(table => {
+            const scale = 1 + bassLevel * 0.1;
+            table.scale.set(scale, scale, scale);
+        });
     }
     
-    // Apply pulsing glow to chairs
     if (interiorElements.chairs) {
-        interiorElements.chairs.forEach(chair => pulseGlow(chair, 0.27)); // Reduced from 0.3
+        interiorElements.chairs.forEach(chair => {
+            const scale = 1 + midLevel * 0.1;
+            chair.scale.set(scale, scale, scale);
+        });
     }
-    
-    // Apply pulsing glow to diner booths
-    if (interiorElements.dinerBooths) {
-        interiorElements.dinerBooths.forEach(booth => pulseGlow(booth, 0.36)); // Reduced from 0.4
-    }
-    
-    // Apply pulsing glow to speakers
-    if (interiorElements.speakers) {
-        interiorElements.speakers.forEach(speaker => pulseGlow(speaker, 0.45)); // Reduced from 0.5
+
+    // Make karaoke TV screen pulse if it exists
+    if (interiorElements.tvScreen) {
+        const brightness = 0.7 + midLevel * 0.3;
+        interiorElements.tvScreen.material.color.setRGB(0, brightness, brightness);
     }
 };
 
 // Neon light glow animation and shared animation variables
 let time = 0;
+
+// Get average frequency in a range of the analyzer data
+const getAverageFrequency = (start, end) => {
+    // Return 0 if audio analyzer is not ready
+    if (typeof audioAnalyser === 'undefined' || !audioData) return 0;
+    
+    let sum = 0;
+    const length = Math.min(end, audioData.length) - start;
+    
+    if (length <= 0) return 0;
+    
+    for (let i = start; i < Math.min(end, audioData.length); i++) {
+        sum += audioData[i];
+    }
+    
+    return sum / length / 255; // Normalize to 0-1 range
+};
 
 const animateNeonSigns = () => {
     time += 0.05;
@@ -2690,9 +2825,22 @@ const animateNeonSigns = () => {
     // Animate street lamp lights
     if (streetElements.streetLamps) {
         streetElements.streetLamps.forEach((lamp, index) => {
-            const light = lamp.children[1];
-            const brightness = 0.7 + Math.sin(time + index) * 0.3;
-            light.material.color.setRGB(brightness, brightness, 0);
+            // Get both the light mesh and point light
+            const lightMesh = lamp.children[4]; // The orange light sphere
+            const pointLight = lamp.children[5]; // The point light
+            
+            // Create a subtle flicker effect typical of sodium vapor lamps
+            const baseIntensity = 0.8;
+            const flickerSpeed = 0.1;
+            const flickerAmount = 0.15;
+            const flicker = baseIntensity + (Math.sin(time * flickerSpeed + index * 2.1) * flickerAmount) +
+                           (Math.sin(time * flickerSpeed * 2.7 + index * 1.3) * flickerAmount * 0.5);
+            
+            // Update both the mesh color and point light intensity
+            const color = new THREE.Color(0xFF8C00);
+            color.multiplyScalar(flicker);
+            lightMesh.material.color.copy(color);
+            pointLight.intensity = flicker;
         });
     }
     
@@ -2972,3 +3120,13 @@ createNightSky(scene);
 
 // Create skybox gradient
 const skybox = createSkybox(scene);
+
+// Make the interior and street elements accessible to the test buttons
+if (typeof setSceneReference === 'function') {
+    // Update the scene reference with the latest data
+    setSceneReference(scene);
+    // Share the elements with the scene
+    if (!scene.userData) scene.userData = {};
+    scene.userData.interiorElements = interiorElements;
+    scene.userData.streetElements = streetElements;
+}

@@ -9,6 +9,9 @@ let audioData = [];
 let isAudioPlaying = false;
 let audioStartTime = 0;
 
+// Export audio variables for use in main.js
+export { audioAnalyser, audioData, isAudioPlaying, audioStartTime };
+
 // Lyrics variables
 let currentStanzaIndex = -1;
 let currentLineIndex = -1;
@@ -21,10 +24,10 @@ let currentSceneRef = 'exterior'; // Default to exterior view
 const lyrics = [
     // First stanza
     [
-        { time: 27000, text: "karaoke at our favorite bar" },
-        { time: 33000, text: "I wanna sing away my cares" },
-        { time: 39000, text: "text me when you're on the bus" },
-        { time: 44000, text: "I'll order us a Gansett pair" }
+        { time: 26500, text: "karaoke at our favorite bar" },
+        { time: 32500, text: "I wanna sing away my cares" },
+        { time: 38500, text: "text me when you're on the bus" },
+        { time: 43500, text: "I'll order us a Gansett pair" }
     ],
     
     // Second stanza
@@ -56,41 +59,64 @@ const setupAudio = (camera) => {
     // Create an AudioLoader
     const audioLoader = new THREE.AudioLoader();
     
-    // Load the sound file
-    audioLoader.load('huey.mp3', function(buffer) {
-        console.log('Audio loaded successfully');
-        
-        // Set the buffer to the audio source
-        audioSource.setBuffer(buffer);
-        audioSource.setLoop(false); // Don't loop the song
-        audioSource.setVolume(0.6); // Slightly higher volume since we're not using spatial audio
-        
-        // Add 'ended' event listener to handle when song finishes
-        audioSource.onEnded = () => {
-            isAudioPlaying = false;
+    // Load the sound file with error handling
+    audioLoader.load(
+        'huey.mp3',
+        function(buffer) {
+            console.log('Audio loaded successfully');
             
-            // Reset the play button
-            const playButton = document.querySelector('button');
-            if (playButton) {
-                playButton.textContent = 'Play Music';
-            }
+            // Set the buffer to the audio source
+            audioSource.setBuffer(buffer);
+            audioSource.setLoop(false); // Don't loop the song
+            audioSource.setVolume(0.6); // Slightly higher volume since we're not using spatial audio
             
-            // Hide lyrics when song ends
-            if (stanzaContainer) {
-                stanzaContainer.style.opacity = '0';
-            }
-        };
-        
-        // Set up analyzer for visualization
-        audioAnalyser = new THREE.AudioAnalyser(audioSource, 128);
-        audioData = audioAnalyser.data;
-        
-        // Add a play button to the DOM
-        addAudioControls();
-        
-        // Initialize lyrics container
-        setupLyricsDisplay();
-    });
+            // Add 'ended' event listener to handle when song finishes
+            audioSource.onEnded = () => {
+                isAudioPlaying = false;
+                
+                // Reset the play button
+                const playButton = document.querySelector('button');
+                if (playButton) {
+                    playButton.textContent = 'Play';
+                }
+                
+                // Hide lyrics when song ends
+                if (stanzaContainer) {
+                    stanzaContainer.style.opacity = '0';
+                }
+            };
+            
+            // Set up analyzer for visualization
+            audioAnalyser = new THREE.AudioAnalyser(audioSource, 128);
+            audioData = audioAnalyser.data;
+            
+            // Add a play button to the DOM
+            addAudioControls();
+            
+            // Initialize lyrics container
+            setupLyricsDisplay();
+        },
+        // Progress callback
+        function(xhr) {
+            console.log('Loading audio: ' + (xhr.loaded / xhr.total * 100) + '% loaded');
+        },
+        // Error callback
+        function(error) {
+            console.error('Error loading audio:', error);
+            // Add error message to the page
+            const errorDiv = document.createElement('div');
+            errorDiv.style.position = 'absolute';
+            errorDiv.style.top = '20px';
+            errorDiv.style.left = '20px';
+            errorDiv.style.color = 'red';
+            errorDiv.style.backgroundColor = 'rgba(0,0,0,0.7)';
+            errorDiv.style.padding = '10px';
+            errorDiv.style.borderRadius = '5px';
+            errorDiv.style.zIndex = '1000';
+            errorDiv.textContent = 'Error loading audio. Please check console for details.';
+            document.body.appendChild(errorDiv);
+        }
+    );
 };
 
 // Add audio control button
@@ -102,7 +128,7 @@ const addAudioControls = () => {
     controlsDiv.style.zIndex = '1000';
     
     const playButton = document.createElement('button');
-    playButton.textContent = 'Play Music';
+    playButton.textContent = 'Play';
     playButton.style.padding = '10px 20px';
     playButton.style.backgroundColor = '#333';
     playButton.style.color = '#fff';
@@ -110,35 +136,74 @@ const addAudioControls = () => {
     playButton.style.cursor = 'pointer';
     playButton.style.fontFamily = 'monospace';
     playButton.style.borderRadius = '4px';
+    playButton.style.marginRight = '10px';
+    playButton.style.boxShadow = '0 0 5px rgba(0,0,0,0.5)';
     
     playButton.addEventListener('click', () => {
         if (!isAudioPlaying) {
-            // Play audio
-            audioSource.play();
-            
-            playButton.textContent = 'Pause Music';
-            isAudioPlaying = true;
-            audioStartTime = Date.now();
-            
-            // Reset transition flag when starting playback
-            sceneTransitionTriggered = false;
-            
-            // Reset lyrics display when starting playback
-            currentStanzaIndex = -1;
-            currentLineIndex = -1;
-            
-            // Clear any existing lyrics
-            stanzaContainer = null;
-            
-            // Clear any existing timeout
-            if (stanzaFadeTimeout) {
-                clearTimeout(stanzaFadeTimeout);
+            // Try to play audio with error handling
+            try {
+                // Resume audio context if it's suspended (browser autoplay policy)
+                if (audioListener.context.state === 'suspended') {
+                    audioListener.context.resume().then(() => {
+                        console.log('Audio context resumed');
+                        audioSource.play();
+                        playButton.textContent = 'Pause';
+                        isAudioPlaying = true;
+                        audioStartTime = Date.now();
+                        
+                        // Reset transition flag when starting playback
+                        sceneTransitionTriggered = false;
+                        explosionTriggered = false;
+                        returnTriggered = false;
+                        preventSecondExplosion = false; // Reset when restarting
+                        
+                        // Reset lyrics display when starting playback
+                        currentStanzaIndex = -1;
+                        currentLineIndex = -1;
+                        
+                        // Clear any existing lyrics
+                        stanzaContainer = null;
+                        
+                        // Clear any existing timeout
+                        if (stanzaFadeTimeout) {
+                            clearTimeout(stanzaFadeTimeout);
+                        }
+                    }).catch(error => {
+                        console.error('Error resuming audio context:', error);
+                    });
+                } else {
+                    audioSource.play();
+                    playButton.textContent = 'Pause';
+                    isAudioPlaying = true;
+                    audioStartTime = Date.now();
+                    
+                    // Reset transition flag when starting playback
+                    sceneTransitionTriggered = false;
+                    explosionTriggered = false;
+                    returnTriggered = false;
+                    preventSecondExplosion = false; // Reset when restarting
+                    
+                    // Reset lyrics display when starting playback
+                    currentStanzaIndex = -1;
+                    currentLineIndex = -1;
+                    
+                    // Clear any existing lyrics
+                    stanzaContainer = null;
+                    
+                    // Clear any existing timeout
+                    if (stanzaFadeTimeout) {
+                        clearTimeout(stanzaFadeTimeout);
+                    }
+                }
+            } catch (error) {
+                console.error('Error playing audio:', error);
             }
         } else {
             // Pause audio
             audioSource.pause();
             
-            playButton.textContent = 'Play Music';
+            playButton.textContent = 'Play';
             isAudioPlaying = false;
             
             // Hide lyrics when paused
@@ -157,12 +222,13 @@ const setupLyricsDisplay = () => {
     // Create container for lyrics
     lyricsContainer = document.createElement('div');
     lyricsContainer.style.position = 'absolute';
-    lyricsContainer.style.top = currentSceneRef === 'exterior' ? '15%' : '65%'; // Moved up by 5%
+    lyricsContainer.style.top = '50%'; // Center vertically
     lyricsContainer.style.left = '0';
     lyricsContainer.style.width = '100%';
     lyricsContainer.style.textAlign = 'center';
     lyricsContainer.style.zIndex = '1000';
     lyricsContainer.style.pointerEvents = 'none'; // Don't interfere with user interaction
+    lyricsContainer.style.transform = 'translateY(-50%)'; // Center the container itself
     lyricsContainer.className = 'lyrics-container'; // Add class for styling
     
     // Add specialized medieval 8-bit font link to document head
@@ -181,6 +247,8 @@ const setupLyricsDisplay = () => {
             text-align: center;
             opacity: 1;
             transition: opacity 1s ease-in-out;
+            margin: 0 auto;
+            max-width: 800px; /* Limit width for better readability */
         }
         
         /* Individual lyric line */
@@ -191,6 +259,8 @@ const setupLyricsDisplay = () => {
             opacity: 0;
             margin: 8px 0;
             transition: opacity 0.8s ease-in-out;
+            padding: 0 20px; /* Add some horizontal padding */
+            box-sizing: border-box;
         }
         
         /* Pixel-art text shadow simulation */
@@ -201,6 +271,13 @@ const setupLyricsDisplay = () => {
             text-shadow: 0 0 1px black, 0 0 2px black, 0 0 3px black;
             word-wrap: break-word;
             word-break: normal;
+        }
+
+        /* Media query for smaller screens */
+        @media (max-height: 600px) {
+            .lyric-line {
+                margin: 4px 0;
+            }
         }
     `;
     document.head.appendChild(customCSS);
@@ -400,18 +477,16 @@ const setupPulseAnimation = (element, colorScheme) => {
     pulseAnimation();
 };
 
-// Update the current scene reference to move lyrics position
+// Update the current scene reference to maintain vertical centering
 const updateSceneReference = (sceneName) => {
     if (sceneName && (sceneName === 'exterior' || sceneName === 'interior')) {
         currentSceneRef = sceneName;
         
         // Update lyric position based on current scene
         if (lyricsContainer) {
-            if (currentSceneRef === 'exterior') {
-                lyricsContainer.style.top = '15%'; // Higher position in exterior view (moved up by 5%)
-            } else {
-                lyricsContainer.style.top = '65%'; // Lower position in interior view (moved up by 5%)
-            }
+            // Keep vertical centering regardless of scene
+            lyricsContainer.style.top = '50%';
+            lyricsContainer.style.transform = 'translateY(-50%)';
         }
     }
 };
@@ -501,6 +576,347 @@ const createAudioReactiveElements = (scene) => {
 // Add variables for scene transition timing
 let sceneTransitionTime = 5000; // 5 seconds into the song
 let sceneTransitionTriggered = false;
+let explosionTriggered = false;
+let explosionTime = 66000; // 1:06 into the song
+let returnToPositionTime = 135000; // 2:15 into the song
+let returnTriggered = false;
+let preventSecondExplosion = false; // Flag to prevent repeated explosions
+
+// Create an explosion effect when the drums and bass kick in
+let blownApartObjects = new Map(); // Store objects blown apart for later return
+let explosionCenter = new THREE.Vector3(0, 0, 0); // Centered at origin, not mic stand
+let originalObjectStates = new Map(); // Store original states of ALL objects before any explosions
+
+const createExplosionEffect = (scene, interiorElements, streetElements) => {
+    // Use center of scene (0,0,0) as explosion origin
+    explosionCenter.set(0, 0, 0);
+    
+    // More complete recursive check for audio reactive particles
+    const isAudioReactiveParticle = (object) => {
+        if (!object) return false;
+        if (object.name === "audioReactiveParticles") return true;
+        if (object.parent && object.parent.name === "audioReactiveParticles") return true;
+        
+        // Check through the geometry types used for particles
+        const particleGeometryTypes = [
+            "TetrahedronGeometry", "OctahedronGeometry", 
+            "DodecahedronGeometry", "IcosahedronGeometry"
+        ];
+        
+        if (object.geometry && particleGeometryTypes.some(type => 
+            object.geometry.type === type || 
+            (object.geometry.constructor && object.geometry.constructor.name === type)
+        )) {
+            return true;
+        }
+        
+        return false;
+    };
+    
+    // Create a flash of light at the center
+    const flashLight = new THREE.PointLight(0xffffff, 2, 30);
+    flashLight.position.copy(explosionCenter);
+    flashLight.position.y += 2; // Slightly above center
+    scene.add(flashLight);
+    
+    // Fade out the flash
+    const fadeOutFlash = () => {
+        if (flashLight.intensity > 0.1) {
+            flashLight.intensity *= 0.9;
+            requestAnimationFrame(fadeOutFlash);
+        } else {
+            scene.remove(flashLight);
+        }
+    };
+    
+    // Start fading after a short delay
+    setTimeout(fadeOutFlash, 100);
+    
+    // Store original positions of ALL objects if we haven't already
+    if (originalObjectStates.size === 0) {
+        scene.traverse(object => {
+            if (object.isMesh || object.isGroup) {
+                // Skip skybox, audio-reactive particles, fairies and any other special objects
+                if (object.name === "skybox" || 
+                    object.name === "audioReactiveParticles" ||
+                    isAudioReactiveParticle(object) ||
+                    (object.parent && object.parent.name === "fairiesGroup") ||
+                    object.name === "fairiesGroup") {
+                    return;
+                }
+                
+                // Store original state
+                originalObjectStates.set(object, {
+                    position: object.position.clone(),
+                    rotation: {
+                        x: object.rotation.x,
+                        y: object.rotation.y,
+                        z: object.rotation.z
+                    }
+                });
+            }
+        });
+    }
+    
+    // Store objects to be blown apart
+    blownApartObjects = new Map();
+    
+    // Function to store original positions and prepare for blow-apart
+    const prepareBlowApart = (object) => {
+        if (object.isMesh || object.isGroup) {
+            // Skip skybox, audio-reactive particles, fairies and any other special objects
+            if (object.name === "skybox" || 
+                object.name === "audioReactiveParticles" ||
+                isAudioReactiveParticle(object) ||
+                (object.parent && object.parent.name === "fairiesGroup") ||
+                object.name === "fairiesGroup") {
+                return;
+            }
+            
+            // Calculate direction from center to object
+            const direction = new THREE.Vector3();
+            direction.subVectors(object.position, explosionCenter).normalize();
+            
+            // Calculate distance from center (affects force)
+            const distance = object.position.distanceTo(explosionCenter);
+            
+            // Check if this is a table or chair
+            const isTableOrChair = (obj) => {
+                const scene = document.querySelector('canvas')?.userData?.scene;
+                if (!scene || !scene.userData) return false;
+                
+                const interiorElements = scene.userData.interiorElements;
+                if (!interiorElements) return false;
+                
+                if (interiorElements.tables && interiorElements.tables.includes(obj)) return true;
+                if (interiorElements.chairs && interiorElements.chairs.includes(obj)) return true;
+                
+                return false;
+            };
+            
+            // Calculate force (closer = stronger force, but much gentler overall)
+            let forceFactor = Math.max(0.3, 5 / (distance + 0.1));
+            
+            // Reduce force for tables and chairs to keep them more stable
+            if (isTableOrChair(object)) {
+                forceFactor *= 0.7; // 30% less force for furniture
+            }
+            
+            // Store data for this object
+            blownApartObjects.set(object, {
+                direction: direction,
+                force: forceFactor,
+                maxDistance: 3 + Math.random() * 3, // Shorter maximum distance
+                isTableOrChair: isTableOrChair(object) // Flag for special handling
+            });
+        }
+    };
+    
+    // Process all objects in the scene
+    scene.traverse(prepareBlowApart);
+    
+    // Function to animate the blow-apart effect
+    const animateBlowApart = () => {
+        let stillMoving = false;
+        
+        blownApartObjects.forEach((data, object) => {
+            if (!object.userData.blowApartDistance) {
+                object.userData.blowApartDistance = 0;
+                
+                // Get data for this object
+                const objData = blownApartObjects.get(object);
+                const isTableOrChair = objData && objData.isTableOrChair;
+                
+                // Store a consistent rotation direction for each object (MUCH slower)
+                // Tables and chairs get even less rotation
+                const rotationMultiplier = isTableOrChair ? 0.3 : 1.0;
+                object.userData.rotationDirection = {
+                    x: Math.sign(Math.random() - 0.5) * 0.0005 * rotationMultiplier,
+                    y: Math.sign(Math.random() - 0.5) * 0.0008 * rotationMultiplier,
+                    z: Math.sign(Math.random() - 0.5) * 0.0005 * rotationMultiplier
+                };
+                
+                // Save initial angle for orbital motion
+                const toObject = new THREE.Vector3().subVectors(object.position, explosionCenter);
+                object.userData.orbitAngle = Math.atan2(toObject.x, toObject.z);
+                object.userData.orbitRadius = toObject.length() * 1.1; // Expand orbit slightly
+                object.userData.orbitSpeed = 0.0005 + Math.random() * 0.0005; // MUCH slower orbit speed
+                object.userData.orbitVertical = -0.05 + Math.random() * 0.1; // Less vertical drift
+            }
+            
+            // If we haven't reached max distance yet
+            if (object.userData.blowApartDistance < data.maxDistance) {
+                // Calculate movement speed (starts fast, slows down) - MUCH slower
+                const speed = 0.03 * data.force * (1 - object.userData.blowApartDistance / data.maxDistance);
+                
+                // Initial outward movement (reduced)
+                object.position.addScaledVector(data.direction, speed * 0.3);
+                
+                // Add orbital motion around the center
+                object.userData.orbitAngle += object.userData.orbitSpeed;
+                
+                // Calculate new position based on orbit
+                const orbitX = Math.sin(object.userData.orbitAngle) * object.userData.orbitRadius;
+                const orbitZ = Math.cos(object.userData.orbitAngle) * object.userData.orbitRadius;
+                
+                // Smoothly transition to orbital path (slower transition)
+                const orbitProgress = Math.min(1.0, object.userData.blowApartDistance / (data.maxDistance * 0.6));
+                object.position.x = explosionCenter.x + orbitX * orbitProgress + data.direction.x * (1 - orbitProgress) * object.userData.blowApartDistance * 3;
+                object.position.z = explosionCenter.z + orbitZ * orbitProgress + data.direction.z * (1 - orbitProgress) * object.userData.blowApartDistance * 3;
+                
+                // Gradual vertical drift (reduced)
+                object.position.y += object.userData.orbitVertical * speed * 0.5;
+                
+                object.userData.blowApartDistance += speed;
+                
+                // Use consistent rotation instead of random for smoothness (MUCH slower)
+                // Scale rotation by force and distance for natural slowing
+                const rotationFactor = data.force * (1 - object.userData.blowApartDistance / data.maxDistance);
+                
+                // Apply less rotation to tables and chairs (if flagged as such)
+                const rotMult = data.isTableOrChair ? 0.5 : 1.0;
+                object.rotation.x += object.userData.rotationDirection.x * rotationFactor * rotMult;
+                object.rotation.y += object.userData.rotationDirection.y * rotationFactor * rotMult;
+                object.rotation.z += object.userData.rotationDirection.z * rotationFactor * rotMult;
+                
+                stillMoving = true;
+            }
+        });
+        
+        if (stillMoving) {
+            requestAnimationFrame(animateBlowApart);
+        }
+        // Objects will stay in their blown apart positions until 2:15
+        // Return animation is triggered in updateAudioReactiveElements
+    };
+    
+    // Start the blow-apart animation
+    animateBlowApart();
+};
+
+// Variables for smooth return animation
+let returnAnimationStartTime = 0;
+let returnAnimationDuration = 20000; // 20 seconds for smooth return (doubled from 10)
+let isReturnAnimationActive = false;
+
+// Function to trigger return animation at 2:15
+const triggerReturnAnimation = () => {
+    // Initialize animation state
+    returnAnimationStartTime = Date.now();
+    isReturnAnimationActive = true;
+    
+    // Create a gentle flash of light
+    const scene = document.querySelector('canvas').userData?.scene;
+    if (scene) {
+        const flashLight = new THREE.PointLight(0xffffff, 1, 30);
+        flashLight.position.copy(explosionCenter);
+        flashLight.position.y += 2;
+        scene.add(flashLight);
+        
+        // Fade out the flash very quickly
+        const fadeOutFlash = () => {
+            if (flashLight.intensity > 0.1) {
+                flashLight.intensity *= 0.9;
+                requestAnimationFrame(fadeOutFlash);
+            } else {
+                scene.remove(flashLight);
+            }
+        };
+        setTimeout(fadeOutFlash, 50);
+    }
+};
+
+// Function to update return animation each frame
+const updateReturnAnimation = () => {
+    if (!isReturnAnimationActive) return;
+    
+    // Calculate progress (0 to 1)
+    const elapsed = Date.now() - returnAnimationStartTime;
+    const progress = Math.min(1.0, elapsed / returnAnimationDuration);
+    
+    // Smooth easing function for natural movement
+    const easeOutQuint = (t) => 1 - Math.pow(1 - t, 5);
+    const eased = easeOutQuint(progress);
+    
+    // Update all blown apart objects
+    blownApartObjects.forEach((data, object) => {
+        // Skip if object was removed
+        if (!object.parent) return;
+        
+        // Get original state
+        const originalState = originalObjectStates.get(object);
+        if (!originalState) return;
+        
+        // Smooth position interpolation
+        const currentPos = object.position.clone();
+        const targetPos = originalState.position;
+        
+        // Use THREE.js Vector3.lerp for smooth interpolation
+        object.position.copy(
+            currentPos.lerp(targetPos, eased)
+        );
+        
+        // Smooth rotation interpolation
+        const lerpAngle = (start, end, t) => {
+            // Normalize angles to avoid multiple rotations
+            const normalize = (angle) => {
+                while (angle > Math.PI) angle -= Math.PI * 2;
+                while (angle < -Math.PI) angle += Math.PI * 2;
+                return angle;
+            };
+            
+            let startAngle = normalize(start);
+            let endAngle = normalize(end);
+            
+            // Find shortest path
+            let diff = endAngle - startAngle;
+            if (Math.abs(diff) > Math.PI) {
+                if (diff > 0) {
+                    diff = diff - Math.PI * 2;
+                } else {
+                    diff = diff + Math.PI * 2;
+                }
+            }
+            
+            return startAngle + diff * t;
+        };
+        
+        // Apply rotation interpolation
+        object.rotation.x = lerpAngle(object.rotation.x, originalState.rotation.x, eased);
+        object.rotation.y = lerpAngle(object.rotation.y, originalState.rotation.y, eased);
+        object.rotation.z = lerpAngle(object.rotation.z, originalState.rotation.z, eased);
+    });
+    
+    // End animation when complete
+    if (progress >= 1.0) {
+        isReturnAnimationActive = false;
+        preventSecondExplosion = true; // Prevent further explosions after return
+        
+        // Ensure perfect placement at the end
+        blownApartObjects.forEach((data, object) => {
+            if (object.parent) {
+                const originalState = originalObjectStates.get(object);
+                if (originalState) {
+                    // Set exact position and rotation
+                    object.position.copy(originalState.position);
+                    object.rotation.set(
+                        originalState.rotation.x,
+                        originalState.rotation.y,
+                        originalState.rotation.z
+                    );
+                    
+                    // Clear any temporary animation data
+                    delete object.userData.blowApartDistance;
+                    delete object.userData.rotationDirection;
+                    delete object.userData.orbitAngle;
+                    delete object.userData.orbitRadius;
+                    delete object.userData.orbitSpeed;
+                    delete object.userData.orbitVertical;
+                }
+            }
+        });
+    }
+};
 
 // Update audio-reactive elements based on audio analysis
 const updateAudioReactiveElements = (scene, interiorElements, streetElements, time) => {
@@ -529,6 +945,25 @@ const updateAudioReactiveElements = (scene, interiorElements, streetElements, ti
         console.log("Triggered transition to interior scene at 5 seconds");
     }
     
+    // Check for explosion time (1:06) - but only if we haven't prevented further explosions
+    if (!explosionTriggered && !preventSecondExplosion && isAudioPlaying && currentPlaybackTime >= explosionTime) {
+        createExplosionEffect(scene, interiorElements, streetElements);
+        explosionTriggered = true;
+        console.log("Triggered explosion effect at 1:06");
+    }
+    
+    // Check for return to position time (2:15)
+    if (explosionTriggered && !returnTriggered && isAudioPlaying && currentPlaybackTime >= returnToPositionTime) {
+        triggerReturnAnimation();
+        returnTriggered = true;
+        console.log("Triggered return to original positions at 2:15");
+    }
+    
+    // Update return animation if active
+    if (isReturnAnimationActive) {
+        updateReturnAnimation();
+    }
+    
     // Update lyrics display
     updateLyrics();
     
@@ -543,7 +978,7 @@ const updateAudioReactiveElements = (scene, interiorElements, streetElements, ti
     // Update particles based on audio
     updateAudioParticles(scene, bassAvg, midAvg, highAvg, time);
     
-    // Make furniture and objects react to audio
+    // Make furniture react to audio
     updateFurnitureReactions(interiorElements, bassAvg, midAvg, highAvg, time);
     
     // Make building react to bass
@@ -567,8 +1002,50 @@ const applyGlobalAudioEffect = (scene, bass, mid, high, time) => {
     const avgIntensity = (bass + mid + high) / 3;
     const pulse = 1.0 + avgIntensity * 0.2;
     
+    // Function to check if an object is a table or chair (that should be excluded)
+    const isTableOrChair = (object) => {
+        // Check if this object is part of interiorElements.tables or interiorElements.chairs
+        const scene = document.querySelector('canvas')?.userData?.scene;
+        if (!scene || !scene.userData) return false;
+        
+        const interiorElements = scene.userData.interiorElements;
+        if (!interiorElements) return false;
+        
+        // Check for tables
+        if (interiorElements.tables && interiorElements.tables.includes(object)) {
+            return true;
+        }
+        
+        // Check for chairs
+        if (interiorElements.chairs && interiorElements.chairs.includes(object)) {
+            return true;
+        }
+        
+        // Check if this is a child of a table or chair
+        if (object.parent) {
+            if (interiorElements.tables && interiorElements.tables.includes(object.parent)) {
+                return true;
+            }
+            if (interiorElements.chairs && interiorElements.chairs.includes(object.parent)) {
+                return true;
+            }
+        }
+        
+        return false;
+    };
+    
     // Apply color modulation to all objects with materials in the scene
     scene.traverse(object => {
+        // Skip fairies and their children
+        if (object.parent && object.parent.name === 'fairiesGroup') return;
+        
+        // Skip any audio-reactive particles completely
+        if (object.parent && object.parent.name === 'audioReactiveParticles') return;
+        if (object.name === 'audioReactiveParticles') return;
+        
+        // Skip tables and chairs completely
+        if (isTableOrChair(object)) return;
+        
         if (object.isMesh && object.material) {
             // Handle different material types
             if (object.material.color) {
@@ -671,34 +1148,40 @@ const updateAudioParticles = (scene, bass, mid, high, time) => {
     const elements = scene.userData.audioReactiveElements;
     if (!elements.particleGroup || !elements.particles) return;
     
-    // Calculate visualization intensity based on audio
-    // Higher audio values = more intense visualization
-    const intensityFactor = 0.3 + (bass + mid + high) * 0.2; // 0.3 to 0.9 range
+    // Calculate visualization intensity based on audio - reduced impact
+    const intensityFactor = 0.3 + (bass + mid + high) * 0.1; // Reduced from 0.2
     
     // Animate particles based on audio frequencies
     const animateParticles = (particles, frequencyBand, rotationFactor) => {
         particles.forEach((particle, index) => {
             // Use particle's index to create consistent patterns instead of random flickering
             const particlePhase = index * 0.1;
-            const particleOffset = Math.sin(time * 0.3 + particlePhase) * 0.5 + 0.5; // 0 to 1 range
+            // Slower oscillation
+            const particleOffset = Math.sin(time * 0.15 + particlePhase) * 0.5 + 0.5; // Reduced from 0.3
             
-            // Scale with audio and oscillation (never disappear completely)
-            const baseScale = 0.6 + particleOffset * 0.3; // Base oscillation
-            const audioScale = baseScale + frequencyBand * 0.5; // Add audio reactivity
+            // Scale with audio and oscillation - gentler changes
+            const baseScale = 0.7 + particleOffset * 0.2; // Reduced variation
+            const audioScale = baseScale + frequencyBand * 0.3; // Reduced from 0.5
             particle.scale.set(audioScale, audioScale, audioScale);
             
-            // Position animation - smoother movement
-            particle.position.x += Math.sin(time * 0.2 + particlePhase) * frequencyBand * 0.02;
-            particle.position.y += Math.sin(time * 0.3 + particlePhase) * frequencyBand * 0.015;
-            particle.position.z += Math.cos(time * 0.25 + particlePhase) * frequencyBand * 0.02;
+            // Position animation - MUCH slower and gentler movement
+            // Ensure all particle types move by using non-zero values even when frequencyBand is low
+            const minMovement = 0.0005; // Minimum movement even when audio is quiet
+            const xMovement = Math.sin(time * 0.08 + particlePhase) * (minMovement + frequencyBand * 0.01);
+            const yMovement = Math.sin(time * 0.1 + particlePhase) * (minMovement + frequencyBand * 0.008);
+            const zMovement = Math.cos(time * 0.09 + particlePhase) * (minMovement + frequencyBand * 0.01);
             
-            // Rotation animation - steady rotation based on audio levels
-            particle.rotation.x += frequencyBand * rotationFactor * 0.03;
-            particle.rotation.y += frequencyBand * rotationFactor * 0.02;
-            particle.rotation.z += frequencyBand * rotationFactor * 0.025;
+            particle.position.x += xMovement;
+            particle.position.y += yMovement;
+            particle.position.z += zMovement;
             
-            // Color shifts based on audio frequency
-            const intensity = 0.5 + frequencyBand * 0.5;
+            // Rotation animation - MUCH slower rotation but always moving
+            particle.rotation.x += (minMovement + frequencyBand * rotationFactor * 0.01);
+            particle.rotation.y += (minMovement + frequencyBand * rotationFactor * 0.008);
+            particle.rotation.z += (minMovement + frequencyBand * rotationFactor * 0.009);
+            
+            // Color shifts based on audio frequency - less dramatic
+            const intensity = 0.6 + frequencyBand * 0.3; // Reduced from 0.5, more baseline
             
             // Different color schemes for different shapes
             if (particles === elements.particles.tetrahedrons) {
@@ -715,9 +1198,9 @@ const updateAudioParticles = (scene, bass, mid, high, time) => {
                 particle.material.color.setRGB(intensity * 0.3, intensity, intensity);
             }
             
-            // Opacity based on audio and phase - smooth fade in/out
-            const baseOpacity = 0.4 + particleOffset * 0.3; // 0.4 to 0.7 range
-            const audioOpacity = Math.min(1.0, baseOpacity + frequencyBand * 0.3); // Add audio reactivity
+            // Opacity based on audio and phase - smoother changes
+            const baseOpacity = 0.5 + particleOffset * 0.2; // Reduced variation from 0.3
+            const audioOpacity = Math.min(0.9, baseOpacity + frequencyBand * 0.2); // Reduced max and impact from 1.0, 0.3
             particle.material.opacity = audioOpacity;
             
             // Always visible, but opacity and scale changes with audio
@@ -726,10 +1209,11 @@ const updateAudioParticles = (scene, bass, mid, high, time) => {
     };
     
     // Animate different shapes based on different frequency bands
-    animateParticles(elements.particles.tetrahedrons, bass, 0.8);     // Bass controls tetrahedrons
-    animateParticles(elements.particles.octahedrons, mid, 0.6);       // Mid frequencies control octahedrons
-    animateParticles(elements.particles.dodecahedrons, high, 0.4);    // High frequencies control dodecahedrons
-    animateParticles(elements.particles.icosahedrons, (bass + mid + high) / 3, 0.5); // All frequencies control icosahedrons
+    // Reduced rotation factors
+    animateParticles(elements.particles.tetrahedrons, bass, 0.4);     // Reduced from 0.8
+    animateParticles(elements.particles.octahedrons, mid, 0.3);       // Reduced from 0.6
+    animateParticles(elements.particles.dodecahedrons, high, 0.2);    // Reduced from 0.4
+    animateParticles(elements.particles.icosahedrons, (bass + mid + high) / 3, 0.25); // Reduced from 0.5
     
     // Handle particles that moved too far away
     const maxDistance = 18;
@@ -745,66 +1229,54 @@ const updateAudioParticles = (scene, bass, mid, high, time) => {
     });
 };
 
-// Make furniture react to the music
+// Make furniture react to the music - but only speakers should pulse
 const updateFurnitureReactions = (interiorElements, bass, mid, high, time) => {
-    // Make speakers "bump" with the bass
+    if (!interiorElements) return;
+    
+    // Reset tables and chairs to normal scale (to be extra sure)
+    if (interiorElements.tables) {
+        interiorElements.tables.forEach(table => {
+            table.scale.set(1, 1, 1);
+        });
+    }
+    
+    if (interiorElements.chairs) {
+        interiorElements.chairs.forEach(chair => {
+            chair.scale.set(1, 1, 1);
+        });
+    }
+   
+    /* REMOVED audio reactivity for tables and chairs
+    // Make tables pulse with bass
+    if (interiorElements.tables) {
+        interiorElements.tables.forEach(table => {
+            const scale = 1.0 + bass * 0.2;
+            table.scale.set(scale, scale, scale);
+        });
+    }
+    
+    // Make chairs pulse with mid frequencies
+    if (interiorElements.chairs) {
+        interiorElements.chairs.forEach(chair => {
+            const scale = 1.0 + mid * 0.15;
+            chair.scale.set(scale, scale, scale);
+        });
+    }
+    */
+    
+    // Make beer cans pulse with bass
+    if (interiorElements.beerCans) {
+        interiorElements.beerCans.forEach(can => {
+            const scale = 1.0 + bass * 0.15;
+            can.scale.set(scale, scale, scale);
+        });
+    }
+    
+    // Make speakers pulse with mid frequencies
     if (interiorElements.speakers) {
         interiorElements.speakers.forEach(speaker => {
-            if (speaker) {
-                speaker.scale.set(
-                    1.0 + bass * 0.15, 
-                    1.0 + bass * 0.1, 
-                    1.0 + bass * 0.15
-                );
-                
-                // Update speaker glow based on bass
-                speaker.traverse(child => {
-                    if (child.isMesh && child.material && child.material.uniforms && 
-                        child.material.uniforms.glowIntensity) {
-                        child.material.uniforms.glowIntensity.value = 0.45 + bass * 0.4;
-                    }
-                });
-            }
-        });
-    }
-    
-    // Make booth tables react to mid frequencies
-    if (interiorElements.dinerBooths) {
-        interiorElements.dinerBooths.forEach(booth => {
-            if (booth) {
-                // Find the table part within the booth
-                booth.traverse(child => {
-                    if (child.name === 'boothTable' && child.material && 
-                        child.material.uniforms && child.material.uniforms.glowIntensity) {
-                        child.material.uniforms.glowIntensity.value = 0.36 + mid * 0.25;
-                    }
-                });
-            }
-        });
-    }
-    
-    // Make bar stools glow with high frequencies
-    if (interiorElements.barStools) {
-        interiorElements.barStools.forEach(stool => {
-            if (stool) {
-                stool.traverse(child => {
-                    if (child.isMesh && child.material && child.material.uniforms && 
-                        child.material.uniforms.glowIntensity) {
-                        child.material.uniforms.glowIntensity.value = 0.27 + high * 0.3;
-                    }
-                });
-            }
-        });
-    }
-    
-    // Make fairy lights react to high frequencies
-    if (interiorElements.fairies) {
-        interiorElements.fairies.forEach((fairy, index) => {
-            // Increased movement based on high frequencies
-            fairy.position.y = Math.sin(time * 0.5 + index * 0.5) * (0.1 + high * 0.2);
-            // Pulse scale with high frequencies
-            const scale = 1.0 + high * 0.5;
-            fairy.scale.set(scale, scale, scale);
+            const scale = 1.0 + mid * 0.2;
+            speaker.scale.set(scale, scale, scale);
         });
     }
 };
@@ -822,9 +1294,19 @@ const updateBuildingReactions = (streetElements, bass) => {
     }
 };
 
+// Make the scene accessible to the test buttons
+const setSceneReference = (scene) => {
+    const canvas = document.querySelector('canvas');
+    if (canvas) {
+        if (!canvas.userData) canvas.userData = {};
+        canvas.userData.scene = scene;
+    }
+};
+
 export { 
     setupAudio, 
     createAudioReactiveElements, 
     updateAudioReactiveElements,
-    updateSceneReference
+    updateSceneReference,
+    setSceneReference
 }; 

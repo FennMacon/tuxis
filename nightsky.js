@@ -4,20 +4,17 @@ import * as THREE from 'three';
 
 // Create a starry night sky with a large yellow moon
 const createNightSky = (scene) => {
-    // Generate a random moon phase (0-7)
-    // 0: New Moon, 1: Waxing Crescent, 2: First Quarter, 3: Waxing Gibbous
+    // Generate a random moon phase (1-7, excluding New Moon)
+    // 1: Waxing Crescent, 2: First Quarter, 3: Waxing Gibbous
     // 4: Full Moon, 5: Waning Gibbous, 6: Last Quarter, 7: Waning Crescent
-    const moonPhase = Math.floor(Math.random() * 8);
+    const moonPhase = Math.floor(Math.random() * 7) + 1; // Now generates 1-7 instead of 0-7
     console.log(`Moon phase: ${getMoonPhaseName(moonPhase)}`);
     
     // Create the moon based on phase
     let moon, moonGlow;
     
-    if (moonPhase === 0) {
-        // New moon - barely visible outline
-        moon = createNewMoon();
-        moonGlow = createMoonGlow(0.1); // Very subtle glow
-    } else if (moonPhase === 4) {
+    // New moon is now removed from random selection
+    if (moonPhase === 4) {
         // Full moon
         moon = createFullMoon();
         moonGlow = createMoonGlow(0.3);
@@ -138,7 +135,6 @@ const createNightSky = (scene) => {
 // Get descriptive name for moon phase
 const getMoonPhaseName = (phase) => {
     const phaseNames = [
-        "New Moon",
         "Waxing Crescent",
         "First Quarter", 
         "Waxing Gibbous",
@@ -147,19 +143,7 @@ const getMoonPhaseName = (phase) => {
         "Last Quarter",
         "Waning Crescent"
     ];
-    return phaseNames[phase];
-};
-
-// Create a new moon (nearly invisible)
-const createNewMoon = () => {
-    const moonGeometry = new THREE.SphereGeometry(5, 8, 8);
-    const moonMaterial = new THREE.MeshBasicMaterial({
-        color: 0x222233, // Very dark blue-gray
-        opacity: 0.7,
-        transparent: true,
-        wireframe: false
-    });
-    return new THREE.Mesh(moonGeometry, moonMaterial);
+    return phaseNames[phase - 1];
 };
 
 // Create a full moon
