@@ -48,7 +48,7 @@ const lyrics = [
 ];
 
 // Setup audio with the provided camera
-const setupAudio = (camera) => {
+const setupAudio = (camera, onLoadCallback) => {
     // Create an AudioListener and add it to the camera
     audioListener = new THREE.AudioListener();
     camera.add(audioListener);
@@ -90,11 +90,14 @@ const setupAudio = (camera) => {
             audioAnalyser = new THREE.AudioAnalyser(audioSource, 128);
             audioData = audioAnalyser.data;
             
-            // Add a play button to the DOM
-            addAudioControls();
-            
             // Initialize lyrics container
             setupLyricsDisplay();
+
+            // If a callback is provided, execute it now that audio is loaded
+            if (onLoadCallback) {
+                console.log("audio.js: About to call onLoadCallback from setupAudio"); // DEBUG
+                onLoadCallback();
+            }
         },
         // Progress callback
         function(xhr) {
@@ -493,6 +496,7 @@ const updateSceneReference = (sceneName) => {
 
 // Create audio-reactive particles in the scene
 const createAudioReactiveElements = (scene) => {
+    console.log("createAudioReactiveElements called in audio.js"); // For debugging
     // Create multiple particle systems with different geometries
     const particleCount = 80;
     const particleGroups = new THREE.Group();
@@ -921,6 +925,7 @@ const updateReturnAnimation = () => {
 // Update audio-reactive elements based on audio analysis
 const updateAudioReactiveElements = (scene, interiorElements, streetElements, time) => {
     if (!audioAnalyser || !isAudioPlaying) return;
+    console.log("updateAudioReactiveElements called. Bass Avg:", getAverageFrequency(1, 4), "Mid Avg:", getAverageFrequency(5,20)); // For debugging
     
     // Update frequency data
     audioAnalyser.getFrequencyData();
@@ -1303,10 +1308,43 @@ const setSceneReference = (scene) => {
     }
 };
 
+// New function to be called when splash screen play button is clicked
+const startAudioFromSplash = () => {
+    if (!isAudioPlaying) {
+        try {
+            if (audioListener.context.state === 'suspended') {
+                audioListener.context.resume().then(() => {
+                    console.log('Audio context resumed from splash start');
+                    if (audioSource) audioSource.play();
+                    isAudioPlaying = true;
+                    audioStartTime = Date.now();
+                    currentStanzaIndex = -1;
+                    currentLineIndex = -1;
+                    if (stanzaFadeTimeout) clearTimeout(stanzaFadeTimeout);
+                    // Consider resetting other relevant flags if needed
+                }).catch(error => {
+                    console.error('Error resuming audio context from splash:', error);
+                });
+            } else {
+                if (audioSource) audioSource.play();
+                isAudioPlaying = true;
+                audioStartTime = Date.now();
+                currentStanzaIndex = -1;
+                currentLineIndex = -1;
+                if (stanzaFadeTimeout) clearTimeout(stanzaFadeTimeout);
+                 // Consider resetting other relevant flags if needed
+            }
+        } catch (error) {
+            console.error('Error playing audio from splash:', error);
+        }
+    }
+};
+
 export { 
     setupAudio, 
     createAudioReactiveElements, 
     updateAudioReactiveElements,
     updateSceneReference,
-    setSceneReference
+    setSceneReference,
+    startAudioFromSplash
 }; 

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { setupAudio, createAudioReactiveElements, updateAudioReactiveElements, audioAnalyser, audioData, isAudioPlaying, audioStartTime } from './audio.js';
+import { setupAudio, createAudioReactiveElements as createAudioElements, updateAudioReactiveElements, audioAnalyser, audioData, isAudioPlaying, audioStartTime, startAudioFromSplash } from './audio.js'; // Renamed createAudioReactiveElements to avoid conflict, added startAudioFromSplash
 import { createNightSky, updateNightSky } from './nightsky.js';
 import { createSkybox, updateSkybox } from './skybox.js';
 
@@ -100,12 +100,24 @@ const updateCameraPosition = () => {
 };
 
 // Low resolution effect
-const pixelRatio = 0.5; // Lower number = more pixelated
+const pixelRatio = 0.7; // Increased from 0.5 for less blur
 
 // Create pixelated render target
 const renderTargetWidth = Math.floor(window.innerWidth * pixelRatio);
 const renderTargetHeight = Math.floor(window.innerHeight * pixelRatio);
 const renderTarget = new THREE.WebGLRenderTarget(renderTargetWidth, renderTargetHeight);
+
+// Create ping-pong render targets for feedback post-processing
+let postBufferA = new THREE.WebGLRenderTarget(renderTargetWidth, renderTargetHeight, {
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.NearestFilter,
+    format: THREE.RGBAFormat
+});
+let postBufferB = new THREE.WebGLRenderTarget(renderTargetWidth, renderTargetHeight, {
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.NearestFilter,
+    format: THREE.RGBAFormat
+});
 
 // Add a solid black plane below the road to block stars from showing through
 const createGroundPlane = () => {
@@ -133,11 +145,15 @@ const postMaterial = new THREE.ShaderMaterial({
         }
     `,
     fragmentShader: `
-        uniform sampler2D tDiffuse;
-        uniform vec2 resolution; // Resolution of the screen
+        uniform sampler2D tDiffuse;         // Current scene render
+        uniform sampler2D tFeedback;        // Previous frame's post-processed output
+        uniform vec2 resolution;            // Resolution of the screen
         uniform float scanlineIntensity;
         uniform float scanlineFrequency;
-        uniform float barrelDistortion; // For screen curvature
+        uniform float barrelDistortion;     // For screen curvature
+        uniform float feedbackAmount;       // How much of the previous frame to blend
+        uniform bool u_applyEffects;        // Switch for effect pass vs display pass
+        uniform float toneMappingStrength;  // Strength of the tone mapping
 
         varying vec2 vUv;
         
@@ -149,29 +165,54 @@ const postMaterial = new THREE.ShaderMaterial({
         }
 
         void main() {
-            // Apply barrel distortion for screen curvature
-            vec2 distortedUv = distort(vUv, barrelDistortion);
+            if (u_applyEffects) {
+                // Apply barrel distortion for current scene lookup
+                vec2 distortedUv = distort(vUv, barrelDistortion);
 
-            vec4 texel = vec4(0.0);
+                vec4 currentFrameTexel = vec4(0.0);
+                // Only sample if UVs are within [0,1] range after distortion
+                if (distortedUv.x >= 0.0 && distortedUv.x <= 1.0 && distortedUv.y >= 0.0 && distortedUv.y <= 1.0) {
+                    currentFrameTexel = texture2D(tDiffuse, distortedUv);
+                }
 
-            // Only sample if UVs are within [0,1] range after distortion
-            if (distortedUv.x >= 0.0 && distortedUv.x <= 1.0 && distortedUv.y >= 0.0 && distortedUv.y <= 1.0) {
-                texel = texture2D(tDiffuse, distortedUv);
+                // Feedback from previous post-processed frame (sample with non-distorted UVs)
+                vec4 feedbackTexel = texture2D(tFeedback, vUv);
+
+                // Slightly dim the current frame before blending to compensate for brightness increase
+                vec3 dimmedCurrentFrame = currentFrameTexel.rgb * 0.92; // Dim factor (0.0 to 1.0)
+                // Blend the dimmed current frame with the faded feedback
+                vec3 blendedColor = dimmedCurrentFrame + feedbackTexel.rgb * feedbackAmount;
+                
+                // Apply scanlines to the blended result (using distorted UVs for CRT consistency)
+                float scanlineEffect = sin(distortedUv.y * scanlineFrequency) * scanlineIntensity;
+                vec3 crtAffectedColor = blendedColor - scanlineEffect;
+
+                // Reinhard tone mapping to control brightness and glow
+                vec3 reinhardMapped = crtAffectedColor / (crtAffectedColor + vec3(1.0));
+
+                // Blend between original (pre-tone mapping) and tone-mapped color
+                vec3 blendedToneMappedColor = mix(crtAffectedColor, reinhardMapped, toneMappingStrength);
+                
+                // Clamp the final color to ensure it's within displayable range
+                vec3 finalColor = clamp(blendedToneMappedColor, 0.0, 1.0);
+                
+                gl_FragColor = vec4(finalColor, currentFrameTexel.a); // Use alpha from current frame
+            } else {
+                // Simple display pass: just show the input texture
+                gl_FragColor = texture2D(tDiffuse, vUv);
             }
-
-            // Scanlines
-            float scanline = sin(distortedUv.y * scanlineFrequency) * scanlineIntensity;
-            vec3 scanlinedColor = texel.rgb - scanline;
-            
-            gl_FragColor = vec4(scanlinedColor, texel.a);
         }
     `,
     uniforms: {
         tDiffuse: { value: renderTarget.texture },
+        tFeedback: { value: null }, // Will be set to postBufferB.texture
         resolution: { value: new THREE.Vector2(renderTargetWidth, renderTargetHeight) },
-        scanlineIntensity: { value: 0.05 }, // Adjust for more/less visible scanlines
-        scanlineFrequency: { value: renderTargetHeight * 1.5 }, // Adjust for scanline density
-        barrelDistortion: { value: 0.35 } // Adjust for more/less screen curvature
+        scanlineIntensity: { value: 0.03 }, // Reduced from 0.05
+        scanlineFrequency: { value: renderTargetHeight * 1.5 },
+        barrelDistortion: { value: 0.15 }, // Reduced from 0.15 for less blur
+        feedbackAmount: { value: 0.65 }, // User adjusted value
+        u_applyEffects: { value: true }, // Default to applying effects
+        toneMappingStrength: { value: 0.65 } // Default to 70% tone mapping strength
     }
 });
 const postPlane = new THREE.PlaneGeometry(2, 2);
@@ -2475,17 +2516,47 @@ const createInteriorScene = () => {
     const poleGeometry = new THREE.CylinderGeometry(0.03, 0.05, 1.5, 4, 1);
     const poleMaterial = createWireframeMaterial(0xCCCCCC);
     const pole = new THREE.Mesh(poleGeometry, poleMaterial);
-    pole.position.y = 0.75;
+    pole.position.y = 0.75; // Center of the pole, so it stands from y=0 to y=1.5
     micStandGroup.add(pole);
+
+    // New Microphone head - SM58 style - Revised for better connection and proportions
+    const micHeadGroup = new THREE.Group(); // This group will be the SM58 mic itself
+
+    // SM58 Microphone Body (handle part)
+    const micBodyHeight = 0.18; // Height of the microphone body
+    const micBodyTopRadius = 0.05;  // Radius at the top of the body (where grille meets)
+    const micBodyBottomRadius = 0.04; // Radius at the base of the body
+    const micBodyMaterial = createWireframeMaterial(0x333333); // Dark grey/black for the body
+    const micBodyGeometry = new THREE.CylinderGeometry(micBodyTopRadius, micBodyBottomRadius, micBodyHeight, 12, 1);
+    const micBody = new THREE.Mesh(micBodyGeometry, micBodyMaterial);
+    // Position the body so its *base* is at the origin (0,0,0) of the micHeadGroup
+    micBody.position.y = micBodyHeight / 2;
+    micHeadGroup.add(micBody);
+
+    // SM58 Grille (spherical part)
+    const grilleRadius = 0.07; // Radius of the spherical grille
+    const grilleSegments = 16; // Number of segments for a smoother sphere
+    const micGrilleMaterial = createWireframeMaterial(0xC0C0C0); // Silver color for the grille
+    const grilleGeometry = new THREE.SphereGeometry(grilleRadius, grilleSegments, grilleSegments / 2);
+    const grille = new THREE.Mesh(grilleGeometry, micGrilleMaterial);
+    // Position the grille directly on top of the mic body
+    // The grille's center will be at the top surface of the micBody + grilleRadius
+    grille.position.y = micBodyHeight + grilleRadius * 0.7; // Adjust 0.7 for visual overlap/fit
+    micHeadGroup.add(grille);
+
+    // Position the entire micHeadGroup (the SM58 microphone) onto the stand pole.
+    // The local origin of micHeadGroup is the base of the micBody.
+    // The top of the stand pole is at y = 1.5 in the micStandGroup's coordinate system.
+    micHeadGroup.position.y = 1.5; 
+    micHeadGroup.position.z = 0.1; 
+
+    // Apply the desired rotation to the entire microphone head assembly
+    micHeadGroup.rotation.x = -75 * Math.PI / 180.0; // -75 degrees tilt
+
+    // Add the assembled microphone to the main mic stand group
+    micStandGroup.add(micHeadGroup);
     
-    // Microphone
-    const micGeometry = new THREE.SphereGeometry(0.1, 4, 4);
-    const micMaterial = createWireframeMaterial(0x999999);
-    const mic = new THREE.Mesh(micGeometry, micMaterial);
-    mic.position.y = 1.6;
-    micStandGroup.add(mic);
-    
-    // Position microphone at the front of the stage
+    // Position microphone stand (entire assembly) at the front of the stage
     micStandGroup.position.set(0, 0.3, -11.25);
     sceneGroups.interior.add(micStandGroup);
     interiorElements.micStand = micStandGroup;
@@ -3072,7 +3143,8 @@ const animateNeonSigns = () => {
     // Don't force transition - let audio system handle it
 };
 
-// Event listener for scene transitions with spacebar
+// Event listener for scene transitions with spacebar - COMMENTED OUT
+/*
 document.addEventListener('keydown', (event) => {
     if (event.code === 'Space' && !isTransitioning) {
         const nextSceneName = currentScene === 'exterior' ? 'interior' : 'exterior';
@@ -3080,6 +3152,7 @@ document.addEventListener('keydown', (event) => {
         transitionToScene(nextSceneName);
     }
 });
+*/
 
 // Handle window resize
 window.addEventListener('resize', () => {
@@ -3091,6 +3164,18 @@ window.addEventListener('resize', () => {
     const newRenderTargetWidth = Math.floor(window.innerWidth * pixelRatio);
     const newRenderTargetHeight = Math.floor(window.innerHeight * pixelRatio);
     renderTarget.setSize(newRenderTargetWidth, newRenderTargetHeight);
+
+    // Update post-processing ping-pong buffers
+    postBufferA.setSize(newRenderTargetWidth, newRenderTargetHeight);
+    postBufferB.setSize(newRenderTargetWidth, newRenderTargetHeight);
+
+    // Update shader resolution uniform
+    if (postMaterial.uniforms.resolution) {
+        postMaterial.uniforms.resolution.value.set(newRenderTargetWidth, newRenderTargetHeight);
+    }
+    if (postMaterial.uniforms.scanlineFrequency) { // Also update scanline frequency if it depends on height
+        postMaterial.uniforms.scanlineFrequency.value = newRenderTargetHeight * 1.5;
+    }
 });
 
 // Animation loop with time tracking for transitions
@@ -3129,26 +3214,47 @@ const animate = (currentTime) => {
     
     controls.update();
     
-    // Render to low-res target first
+    // 1. Render main scene to low-res renderTarget (for pixelation)
     renderer.setRenderTarget(renderTarget);
     renderer.render(scene, camera);
     
-    // Then render to screen from the low-res texture
+    // 2. Prepare postMaterial for effects pass (CRT + Trails)
+    postMaterial.uniforms.tDiffuse.value = renderTarget.texture;
+    postMaterial.uniforms.tFeedback.value = postBufferB.texture; // Previous frame with trails
+    postMaterial.uniforms.u_applyEffects.value = true;
+
+    // 3. Render postScene (quad with postMaterial) into postBufferA
+    renderer.setRenderTarget(postBufferA);
+    renderer.render(postScene, postCamera);
+
+    // 4. Prepare postMaterial for simple display pass (no new effects, just show postBufferA)
+    postMaterial.uniforms.tDiffuse.value = postBufferA.texture;
+    postMaterial.uniforms.u_applyEffects.value = false; // Turn off effects for final render to screen
+
+    // 5. Render postScene to screen
     renderer.setRenderTarget(null);
     renderer.render(postScene, postCamera);
+
+    // 6. Swap buffers for next frame (postBufferB will hold the latest trails for feedback)
+    let temp = postBufferA;
+    postBufferA = postBufferB;
+    postBufferB = temp;
 };
 
 animate(0); 
 
 // Initialize audio functionality
-setupAudio(camera);
-createAudioReactiveElements(scene);
+// setupAudio(camera); // This initial call is now handled by the splash screen logic with a callback
 
 // Create the starry night sky with moon
 createNightSky(scene);
 
 // Create skybox gradient
 const skybox = createSkybox(scene);
+
+// Create audio-reactive elements (moved here for pre-loading)
+console.log("main.js: Attempting to call createAudioElements(scene) during initial setup"); // DEBUG
+createAudioElements(scene); 
 
 // Make the interior and street elements accessible to the test buttons
 if (typeof setSceneReference === 'function') {
@@ -3159,3 +3265,41 @@ if (typeof setSceneReference === 'function') {
     scene.userData.interiorElements = interiorElements;
     scene.userData.streetElements = streetElements;
 }
+
+// Initialize splash screen and audio functionality after DOM is loaded
+document.addEventListener('DOMContentLoaded', () => {
+    const splashScreen = document.getElementById('splash-screen');
+    const playKaraokeButton = document.getElementById('play-karaoke-button');
+
+    if (splashScreen && playKaraokeButton) {
+        playKaraokeButton.addEventListener('click', () => {
+            splashScreen.style.display = 'none';
+
+            // Define what happens after audio is loaded
+            const onAudioLoaded = () => {
+                console.log("Audio loaded, starting playback and initializing scene elements.");
+                startAudioFromSplash(); // Start audio playback
+                
+                // Initialize Three.js elements that might depend on audio or run alongside it
+                // console.log("main.js: Attempting to call createAudioElements(scene) from onAudioLoaded"); // DEBUG - REMOVED
+                // createAudioElements(scene);  // MOVED
+                // createNightSky(scene); // MOVED
+                // const skyboxMesh = createSkybox(scene); // MOVED - Assuming createSkybox returns the mesh and adds to scene
+                
+                // Make the interior and street elements accessible if needed by other systems
+                if (typeof setSceneReference === 'function') { // Assuming setSceneReference is globally available or imported
+                    setSceneReference(scene); 
+                    if (!scene.userData) scene.userData = {};
+                    scene.userData.interiorElements = interiorElements; // Ensure interiorElements is in scope
+                    scene.userData.streetElements = streetElements;   // Ensure streetElements is in scope
+                }
+            };
+
+            // Call setupAudio and pass the callback
+            setupAudio(camera, onAudioLoaded);
+
+        });
+    } else {
+        console.error("Splash screen elements not found!");
+    }
+});
