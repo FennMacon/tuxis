@@ -134,15 +134,44 @@ const postMaterial = new THREE.ShaderMaterial({
     `,
     fragmentShader: `
         uniform sampler2D tDiffuse;
+        uniform vec2 resolution; // Resolution of the screen
+        uniform float scanlineIntensity;
+        uniform float scanlineFrequency;
+        uniform float barrelDistortion; // For screen curvature
+
         varying vec2 vUv;
         
+        // Barrel distortion function
+        vec2 distort(vec2 uv, float strength) {
+            vec2 cc = uv - 0.5; // Center coordinates
+            float dist = dot(cc, cc) * strength;
+            return (uv + cc * dist);
+        }
+
         void main() {
-            vec4 texel = texture2D(tDiffuse, vUv);
-            gl_FragColor = texel;
+            // Apply barrel distortion for screen curvature
+            vec2 distortedUv = distort(vUv, barrelDistortion);
+
+            vec4 texel = vec4(0.0);
+
+            // Only sample if UVs are within [0,1] range after distortion
+            if (distortedUv.x >= 0.0 && distortedUv.x <= 1.0 && distortedUv.y >= 0.0 && distortedUv.y <= 1.0) {
+                texel = texture2D(tDiffuse, distortedUv);
+            }
+
+            // Scanlines
+            float scanline = sin(distortedUv.y * scanlineFrequency) * scanlineIntensity;
+            vec3 scanlinedColor = texel.rgb - scanline;
+            
+            gl_FragColor = vec4(scanlinedColor, texel.a);
         }
     `,
     uniforms: {
-        tDiffuse: { value: renderTarget.texture }
+        tDiffuse: { value: renderTarget.texture },
+        resolution: { value: new THREE.Vector2(renderTargetWidth, renderTargetHeight) },
+        scanlineIntensity: { value: 0.05 }, // Adjust for more/less visible scanlines
+        scanlineFrequency: { value: renderTargetHeight * 1.5 }, // Adjust for scanline density
+        barrelDistortion: { value: 0.35 } // Adjust for more/less screen curvature
     }
 });
 const postPlane = new THREE.PlaneGeometry(2, 2);
