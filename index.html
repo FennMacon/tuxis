@@ -116,6 +116,41 @@
             transform: scale(1.02);
         }
 
+        @media (max-height: 550px) and (orientation: landscape) {
+            #splash-screen {
+                padding: 10px;
+            }
+            .content-box {
+                padding: 10px 15px; /* Less vertical padding, retain some horizontal */
+                margin-bottom: 0.5em; /* Reduced space before play button */
+            }
+            .splash-title {
+                font-size: 2.2em; /* Significantly reduced */
+                margin-bottom: 0.05em;
+            }
+            .splash-subtitle {
+                font-size: 1.4em; /* Significantly reduced */
+                margin-bottom: 0.3em;
+            }
+            .song-meta-details {
+                font-size: 0.9em; /* Significantly reduced */
+                margin-top: 0.2em;
+                margin-bottom: 0.5em;
+            }
+            /* Targeting the instruction paragraph specifically */
+            .content-box p {
+                font-size: 0.7em; /* Smaller instructions */
+                line-height: 1.3;
+                color: #bbbbbb; /* Ensure consistent color */
+                margin-top: 0.5em;
+                margin-bottom: 0; /* Remove extra space within content-box */
+            }
+            #play-karaoke-button {
+                padding: 8px 20px; /* Reduced padding */
+                font-size: 1.2em; /* Reduced font size */
+            }
+        }
+
     </style>
 </head>
 <body>
